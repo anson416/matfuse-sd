@@ -160,8 +160,10 @@ cython_debug/
 #.idea/
 
 wandb
-.vscode
+.gradio/
+.vscode/
 *.pt
 *.ckpt
 logs/
 *.pth
+outputs/

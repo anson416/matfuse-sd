@@ -5,14 +5,20 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from PIL import Image
-from Pylette.src.color_extraction import k_means_extraction, median_cut_extraction
 from Pylette import Palette
+from Pylette.src.color_extraction import (
+    k_means_extraction,
+    median_cut_extraction,
+)
 from torch.utils.data import Sampler
+
 
 def pack_maps(maps: dict) -> torch.Tensor:
     return torch.cat(
-        (maps["Diffuse"], maps["Normal"], maps["Roughness"], maps["Specular"]), 0
+        (maps["Diffuse"], maps["Normal"], maps["Roughness"], maps["Specular"]),
+        0,
     )
+
 
 def unpack_maps(maps: torch.Tensor) -> dict:
     maps = maps.cpu()
@@ -88,8 +94,14 @@ def pylette_extract_colors_mod(
 
     if resize:
         img = img.resize((256, 256))
+    img = img.convert("RGBA")
     width, height = img.size
     arr = np.asarray(img)
+
+    # Reshape (H, W, C) -> (H*W, C) for KMeans
+    if mode == "KM" and arr.ndim == 3:
+        arr = arr.reshape(-1, 4)
+    # ----------------------
 
     if mode == "KM":
         colors = k_means_extraction(arr, height, width, palette_size)

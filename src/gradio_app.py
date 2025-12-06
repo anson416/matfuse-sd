@@ -2,7 +2,7 @@ from pathlib import Path
 
 import gradio as gr
 
-from utils.inference_helpers import *
+from utils.inference_helpers import run_editing, run_generation
 
 block = gr.Blocks().queue()
 with block:
@@ -17,7 +17,12 @@ with block:
                     label="Image",
                 )
                 gr.Examples(
-                    [[x] for x in list(Path("sample_materials").glob("**/render.png"))],
+                    [
+                        [x]
+                        for x in list(
+                            Path("sample_materials").glob("**/render.png")
+                        )
+                    ],
                     inputs=input_image_emb,
                 )
                 input_image_palette = gr.Image(
@@ -25,7 +30,12 @@ with block:
                     label="Render Palette",
                 )
                 gr.Examples(
-                    [[x] for x in list(Path("sample_materials").glob("**/render.png"))],
+                    [
+                        [x]
+                        for x in list(
+                            Path("sample_materials").glob("**/render.png")
+                        )
+                    ],
                     inputs=input_image_palette,
                 )
                 sketch = gr.Image(  # TODO Change with taking the sketch from an image using Canny
@@ -34,7 +44,12 @@ with block:
                     image_mode="L",
                 )
                 gr.Examples(
-                    [[x] for x in list(Path("sample_materials").glob("**/sketch.png"))],
+                    [
+                        [x]
+                        for x in list(
+                            Path("sample_materials").glob("**/sketch.png")
+                        )
+                    ],
                     inputs=sketch,
                 )
                 prompt = gr.Textbox(label="Prompt")
@@ -79,15 +94,23 @@ with block:
                     )
                     eta = gr.Number(label="eta (DDIM)", value=0.0)
             with gr.Column():
-
                 result_gallery = gr.Gallery(
                     label="Output", show_label=False, elem_id="gallery"
                 )
                 gr.Markdown("###### Output Format: Sketch, Palette, Maps")
         conditions = [input_image_emb, input_image_palette, sketch, prompt]
-        args = [num_samples, image_resolution, ddim_steps, seed, eta, guidance_scale]
+        args = [
+            num_samples,
+            image_resolution,
+            ddim_steps,
+            seed,
+            eta,
+            guidance_scale,
+        ]
         ips = [*conditions, *args]
-        run_button.click(fn=run_generation, inputs=ips, outputs=[result_gallery])
+        run_button.click(
+            fn=run_generation, inputs=ips, outputs=[result_gallery]
+        )
 
     with gr.Tab("Editing"):
         gr.Markdown("## Material Editing")
@@ -103,7 +126,9 @@ with block:
                     )
                 with gr.Row(elem_id="mask_diff_rough"):
                     mask_diff = gr.Checkbox(label="Mask Diffuse", value=False)
-                    mask_rough = gr.Checkbox(label="Mask Roughness", value=False)
+                    mask_rough = gr.Checkbox(
+                        label="Mask Roughness", value=False
+                    )
                 with gr.Row(elem_id="examples_diff_rough"):
                     gr.Examples(
                         [
@@ -118,7 +143,9 @@ with block:
                         [
                             x.as_posix()
                             for x in list(
-                                Path("sample_materials").glob("**/roughness.png")
+                                Path("sample_materials").glob(
+                                    "**/roughness.png"
+                                )
                             )
                         ],
                         inputs=rough_map,
@@ -128,7 +155,9 @@ with block:
                         sources=["upload"], type="pil", label="normal"
                     )
                     spec_map = gr.ImageEditor(
-                        sources=["upload"], type="pil", label="specular",
+                        sources=["upload"],
+                        type="pil",
+                        label="specular",
                     )
                 with gr.Row(elem_id="mask_norm_spec"):
                     mask_norm = gr.Checkbox(label="Mask normal", value=False)
@@ -147,7 +176,9 @@ with block:
                         [
                             x.as_posix()
                             for x in list(
-                                Path("sample_materials").glob("**/specular.png")
+                                Path("sample_materials").glob(
+                                    "**/specular.png"
+                                )
                             )
                         ],
                         inputs=spec_map,
@@ -225,7 +256,14 @@ with block:
         input_maps = [diff_map, norm_map, rough_map, spec_map]
         mask_maps = [mask_diff, mask_norm, mask_rough, mask_spec]
         conditions = [input_image_embed, prompt, input_image_palette]
-        args = [image_resolution, seed, num_samples, guidance_scale, ddim_steps, eta]
+        args = [
+            image_resolution,
+            seed,
+            num_samples,
+            guidance_scale,
+            ddim_steps,
+            eta,
+        ]
         ips = [*input_maps, *mask_maps, *conditions, *args]
         run_button.click(fn=run_editing, inputs=ips, outputs=[result_gallery])
 

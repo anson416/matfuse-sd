@@ -14,15 +14,19 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import wandb
 from einops import rearrange, repeat
 from omegaconf import ListConfig
-from pytorch_lightning.utilities.distributed import rank_zero_only
+from pytorch_lightning.utilities import rank_zero_only
 from torch.optim.lr_scheduler import LambdaLR
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
-import wandb
-from ldm.models.autoencoder import AutoencoderKL, IdentityFirstStage, VQModelInterface
+from ldm.models.autoencoder import (
+    AutoencoderKL,
+    IdentityFirstStage,
+    VQModelInterface,
+)
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.modules.diffusionmodules.util import (
     extract_into_tensor,
@@ -46,7 +50,11 @@ from ldm.util import (
     visualize_palette,
 )
 
-__conditioning_keys__ = {"concat": "c_concat", "crossattn": "c_crossattn", "adm": "y"}
+__conditioning_keys__ = {
+    "concat": "c_concat",
+    "crossattn": "c_crossattn",
+    "adm": "y",
+}
 
 
 def disabled_train(self, mode=True):
@@ -147,7 +155,9 @@ class DDPM(pl.LightningModule):
 
         self.learn_logvar = learn_logvar
         self.logvar = torch.full(
-            fill_value=logvar_init, size=(self.num_timesteps,), device=self.device
+            fill_value=logvar_init,
+            size=(self.num_timesteps,),
+            device=self.device,
         )
         if self.learn_logvar:
             self.logvar = nn.Parameter(self.logvar, requires_grad=True)
@@ -188,29 +198,37 @@ class DDPM(pl.LightningModule):
         self.num_timesteps = int(timesteps)
         self.linear_start = linear_start
         self.linear_end = linear_end
-        assert (
-            alphas_cumprod.shape[0] == self.num_timesteps
-        ), "alphas have to be defined for each timestep"
+        assert alphas_cumprod.shape[0] == self.num_timesteps, (
+            "alphas have to be defined for each timestep"
+        )
 
         to_torch = partial(torch.tensor, dtype=torch.float32)
 
         self.register_buffer("betas", to_torch(betas))
         self.register_buffer("alphas_cumprod", to_torch(alphas_cumprod))
-        self.register_buffer("alphas_cumprod_prev", to_torch(alphas_cumprod_prev))
+        self.register_buffer(
+            "alphas_cumprod_prev", to_torch(alphas_cumprod_prev)
+        )
 
         # calculations for diffusion q(x_t | x_{t-1}) and others
-        self.register_buffer("sqrt_alphas_cumprod", to_torch(np.sqrt(alphas_cumprod)))
         self.register_buffer(
-            "sqrt_one_minus_alphas_cumprod", to_torch(np.sqrt(1.0 - alphas_cumprod))
+            "sqrt_alphas_cumprod", to_torch(np.sqrt(alphas_cumprod))
         )
         self.register_buffer(
-            "log_one_minus_alphas_cumprod", to_torch(np.log(1.0 - alphas_cumprod))
+            "sqrt_one_minus_alphas_cumprod",
+            to_torch(np.sqrt(1.0 - alphas_cumprod)),
         )
         self.register_buffer(
-            "sqrt_recip_alphas_cumprod", to_torch(np.sqrt(1.0 / alphas_cumprod))
+            "log_one_minus_alphas_cumprod",
+            to_torch(np.log(1.0 - alphas_cumprod)),
         )
         self.register_buffer(
-            "sqrt_recipm1_alphas_cumprod", to_torch(np.sqrt(1.0 / alphas_cumprod - 1))
+            "sqrt_recip_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / alphas_cumprod)),
+        )
+        self.register_buffer(
+            "sqrt_recipm1_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / alphas_cumprod - 1)),
         )
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
@@ -218,7 +236,9 @@ class DDPM(pl.LightningModule):
             1.0 - alphas_cumprod_prev
         ) / (1.0 - alphas_cumprod) + self.v_posterior * betas
         # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
-        self.register_buffer("posterior_variance", to_torch(posterior_variance))
+        self.register_buffer(
+            "posterior_variance", to_torch(posterior_variance)
+        )
         # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
         self.register_buffer(
             "posterior_log_variance_clipped",
@@ -226,12 +246,16 @@ class DDPM(pl.LightningModule):
         )
         self.register_buffer(
             "posterior_mean_coef1",
-            to_torch(betas * np.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)),
+            to_torch(
+                betas * np.sqrt(alphas_cumprod_prev) / (1.0 - alphas_cumprod)
+            ),
         )
         self.register_buffer(
             "posterior_mean_coef2",
             to_torch(
-                (1.0 - alphas_cumprod_prev) * np.sqrt(alphas) / (1.0 - alphas_cumprod)
+                (1.0 - alphas_cumprod_prev)
+                * np.sqrt(alphas)
+                / (1.0 - alphas_cumprod)
             ),
         )
 
@@ -350,8 +374,13 @@ class DDPM(pl.LightningModule):
         :param t: the number of diffusion steps (minus 1). Here, 0 means one step.
         :return: A tuple (mean, variance, log_variance), all of x_start's shape.
         """
-        mean = extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-        variance = extract_into_tensor(1.0 - self.alphas_cumprod, t, x_start.shape)
+        mean = (
+            extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape)
+            * x_start
+        )
+        variance = extract_into_tensor(
+            1.0 - self.alphas_cumprod, t, x_start.shape
+        )
         log_variance = extract_into_tensor(
             self.log_one_minus_alphas_cumprod, t, x_start.shape
         )
@@ -359,21 +388,32 @@ class DDPM(pl.LightningModule):
 
     def predict_start_from_noise(self, x_t, t, noise):
         return (
-            extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
-            - extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
+            extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+            * x_t
+            - extract_into_tensor(
+                self.sqrt_recipm1_alphas_cumprod, t, x_t.shape
+            )
             * noise
         )
 
     def q_posterior(self, x_start, x_t, t):
         posterior_mean = (
-            extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape) * x_start
-            + extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape) * x_t
+            extract_into_tensor(self.posterior_mean_coef1, t, x_t.shape)
+            * x_start
+            + extract_into_tensor(self.posterior_mean_coef2, t, x_t.shape)
+            * x_t
         )
-        posterior_variance = extract_into_tensor(self.posterior_variance, t, x_t.shape)
+        posterior_variance = extract_into_tensor(
+            self.posterior_variance, t, x_t.shape
+        )
         posterior_log_variance_clipped = extract_into_tensor(
             self.posterior_log_variance_clipped, t, x_t.shape
         )
-        return posterior_mean, posterior_variance, posterior_log_variance_clipped
+        return (
+            posterior_mean,
+            posterior_variance,
+            posterior_log_variance_clipped,
+        )
 
     def p_mean_variance(self, x, t, clip_denoised: bool):
         model_out = self.model(x, t)
@@ -384,8 +424,8 @@ class DDPM(pl.LightningModule):
         if clip_denoised:
             x_recon.clamp_(-1.0, 1.0)
 
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_recon, x_t=x, t=t
+        model_mean, posterior_variance, posterior_log_variance = (
+            self.q_posterior(x_start=x_recon, x_t=x, t=t)
         )
         return model_mean, posterior_variance, posterior_log_variance
 
@@ -397,8 +437,13 @@ class DDPM(pl.LightningModule):
         )
         noise = noise_like(x.shape, device, repeat_noise)
         # no noise when t == 0
-        nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
-        return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+        nonzero_mask = (1 - (t == 0).float()).reshape(
+            b, *((1,) * (len(x.shape) - 1))
+        )
+        return (
+            model_mean
+            + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+        )
 
     @torch.no_grad()
     def p_sample_loop(self, shape, return_intermediates=False):
@@ -434,8 +479,11 @@ class DDPM(pl.LightningModule):
     def q_sample(self, x_start, t, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
         return (
-            extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
-            + extract_into_tensor(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
+            extract_into_tensor(self.sqrt_alphas_cumprod, t, x_start.shape)
+            * x_start
+            + extract_into_tensor(
+                self.sqrt_one_minus_alphas_cumprod, t, x_start.shape
+            )
             * noise
         )
 
@@ -448,7 +496,9 @@ class DDPM(pl.LightningModule):
             if mean:
                 loss = torch.nn.functional.mse_loss(target, pred)
             else:
-                loss = torch.nn.functional.mse_loss(target, pred, reduction="none")
+                loss = torch.nn.functional.mse_loss(
+                    target, pred, reduction="none"
+                )
         else:
             raise NotImplementedError("unknown loss type '{loss_type}'")
 
@@ -510,7 +560,8 @@ class DDPM(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         keep_cond = self.ucg_prng.choice(
-            ["none", "all", "mixed"], p=[self.p_drop, self.p_keep, self.p_mixed]
+            ["none", "all", "mixed"],
+            p=[self.p_drop, self.p_keep, self.p_mixed],
         )
 
         for k in self.ucg_training:
@@ -549,7 +600,12 @@ class DDPM(pl.LightningModule):
         if self.use_scheduler:
             lr = self.optimizers().param_groups[0]["lr"]
             self.log(
-                "lr_abs", lr, prog_bar=True, logger=True, on_step=True, on_epoch=False
+                "lr_abs",
+                lr,
+                prog_bar=True,
+                logger=True,
+                on_step=True,
+                on_epoch=False,
             )
 
         return loss
@@ -559,12 +615,22 @@ class DDPM(pl.LightningModule):
         _, loss_dict_no_ema = self.shared_step(batch)
         with self.ema_scope():
             _, loss_dict_ema = self.shared_step(batch)
-            loss_dict_ema = {key + "_ema": loss_dict_ema[key] for key in loss_dict_ema}
+            loss_dict_ema = {
+                key + "_ema": loss_dict_ema[key] for key in loss_dict_ema
+            }
         self.log_dict(
-            loss_dict_no_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True
+            loss_dict_no_ema,
+            prog_bar=False,
+            logger=True,
+            on_step=False,
+            on_epoch=True,
         )
         self.log_dict(
-            loss_dict_ema, prog_bar=False, logger=True, on_step=False, on_epoch=True
+            loss_dict_ema,
+            prog_bar=False,
+            logger=True,
+            on_step=False,
+            on_epoch=True,
         )
         if batch_idx % 100 == 0:
             loss_dict_ema.update({"epoch": self.current_epoch})
@@ -585,7 +651,9 @@ class DDPM(pl.LightningModule):
         return denoise_grid
 
     @torch.no_grad()
-    def log_images(self, batch, N=8, n_row=2, sample=True, return_keys=None, **kwargs):
+    def log_images(
+        self, batch, N=8, n_row=2, sample=True, return_keys=None, **kwargs
+    ):
         log = dict()
         x = self.get_input(batch, self.first_stage_key)
         N = min(x.shape[0], N)
@@ -668,7 +736,9 @@ class LatentDiffusion(DDPM):
         self.cond_stage_key = cond_stage_key
 
         try:
-            self.num_downs = len(first_stage_config.params.ddconfig.ch_mult) - 1
+            self.num_downs = (
+                len(first_stage_config.params.ddconfig.ch_mult) - 1
+            )
         except:
             self.num_downs = 0
         if not scale_by_std:
@@ -714,9 +784,9 @@ class LatentDiffusion(DDPM):
             and batch_idx == 0
             and not self.restarted_from_ckpt
         ):
-            assert (
-                self.scale_factor == 1.0
-            ), "rather not use custom rescaling and std-rescaling simultaneously"
+            assert self.scale_factor == 1.0, (
+                "rather not use custom rescaling and std-rescaling simultaneously"
+            )
             # set rescale weight to 1./std of encodings
             print("### USING STD-RESCALING ###")
             x = super().get_input(batch, self.first_stage_key)
@@ -738,7 +808,12 @@ class LatentDiffusion(DDPM):
         cosine_s=8e-3,
     ):
         super().register_schedule(
-            given_betas, beta_schedule, timesteps, linear_start, linear_end, cosine_s
+            given_betas,
+            beta_schedule,
+            timesteps,
+            linear_start,
+            linear_end,
+            cosine_s,
         )
 
         self.shorten_cond_schedule = self.num_timesteps_cond > 1
@@ -758,7 +833,9 @@ class LatentDiffusion(DDPM):
                 print("Using first stage also as cond stage.")
                 self.cond_stage_model = self.first_stage_model
             elif config == "__is_unconditional__":
-                print(f"Training {self.__class__.__name__} as an unconditional model.")
+                print(
+                    f"Training {self.__class__.__name__} as an unconditional model."
+                )
                 self.cond_stage_model = None
                 # self.be_unconditional = True
             else:
@@ -780,7 +857,8 @@ class LatentDiffusion(DDPM):
         for zd in tqdm(samples, desc=desc):
             denoise_row.append(
                 self.decode_first_stage(
-                    zd.to(self.device), force_not_quantize=force_no_decoder_quantization
+                    zd.to(self.device),
+                    force_not_quantize=force_no_decoder_quantization,
                 )
             )
         n_imgs_per_row = len(denoise_row)
@@ -846,7 +924,9 @@ class LatentDiffusion(DDPM):
             self.split_input_params["clip_min_weight"],
             self.split_input_params["clip_max_weight"],
         )
-        weighting = weighting.view(1, h * w, 1).repeat(1, 1, Ly * Lx).to(device)
+        weighting = (
+            weighting.view(1, h * w, 1).repeat(1, 1, Ly * Lx).to(device)
+        )
 
         if self.split_input_params["tie_braker"]:
             L_weighting = self.delta_border(Ly, Lx)
@@ -883,8 +963,12 @@ class LatentDiffusion(DDPM):
             weighting = self.get_weighting(
                 kernel_size[0], kernel_size[1], Ly, Lx, x.device
             ).to(x.dtype)
-            normalization = fold(weighting).view(1, 1, h, w)  # normalizes the overlap
-            weighting = weighting.view((1, 1, kernel_size[0], kernel_size[1], Ly * Lx))
+            normalization = fold(weighting).view(
+                1, 1, h, w
+            )  # normalizes the overlap
+            weighting = weighting.view(
+                (1, 1, kernel_size[0], kernel_size[1], Ly * Lx)
+            )
 
         elif uf > 1 and df == 1:
             fold_params = dict(
@@ -925,7 +1009,8 @@ class LatentDiffusion(DDPM):
                 stride=(stride[0] // df, stride[1] // df),
             )
             fold = torch.nn.Fold(
-                output_size=(x.shape[2] // df, x.shape[3] // df), **fold_params2
+                output_size=(x.shape[2] // df, x.shape[3] // df),
+                **fold_params2,
             )
 
             weighting = self.get_weighting(
@@ -1019,11 +1104,15 @@ class LatentDiffusion(DDPM):
         return out
 
     @torch.no_grad()
-    def decode_first_stage(self, z, predict_cids=False, force_not_quantize=False):
+    def decode_first_stage(
+        self, z, predict_cids=False, force_not_quantize=False
+    ):
         if predict_cids:
             if z.dim() == 4:
                 z = torch.argmax(z.exp(), dim=1).long()
-            z = self.first_stage_model.quantize.get_codebook_entry(z, shape=None)
+            z = self.first_stage_model.quantize.get_codebook_entry(
+                z, shape=None
+            )
             z = rearrange(z, "b h w c -> b c h w").contiguous()
 
         z = 1.0 / self.scale_factor * z
@@ -1056,12 +1145,12 @@ class LatentDiffusion(DDPM):
                     output_list = [
                         self.first_stage_model.decode(
                             z[:, :, :, :, i],
-                            force_not_quantize=predict_cids or force_not_quantize,
+                            force_not_quantize=predict_cids
+                            or force_not_quantize,
                         )
                         for i in range(z.shape[-1])
                     ]
                 else:
-
                     output_list = [
                         self.first_stage_model.decode(z[:, :, :, :, i])
                         for i in range(z.shape[-1])
@@ -1080,7 +1169,8 @@ class LatentDiffusion(DDPM):
             else:
                 if isinstance(self.first_stage_model, VQModelInterface):
                     return self.first_stage_model.decode(
-                        z, force_not_quantize=predict_cids or force_not_quantize
+                        z,
+                        force_not_quantize=predict_cids or force_not_quantize,
                     )
                 else:
                     return self.first_stage_model.decode(z)
@@ -1155,10 +1245,14 @@ class LatentDiffusion(DDPM):
                 # conditions = c.pop("conditions")
             if self.shorten_cond_schedule:  # TODO: drop this option
                 tc = self.cond_ids[t].to(self.device)
-                c = self.q_sample(x_start=c, t=tc, noise=torch.randn_like(c.float()))
+                c = self.q_sample(
+                    x_start=c, t=tc, noise=torch.randn_like(c.float())
+                )
         return self.p_losses(x, c, t, *args, **kwargs)
 
-    def _rescale_annotations(self, bboxes, crop_coordinates):  # TODO: move to dataset
+    def _rescale_annotations(
+        self, bboxes, crop_coordinates
+    ):  # TODO: move to dataset
         def rescale_bbox(bbox):
             x0 = clamp((bbox[0] - crop_coordinates[0]) / crop_coordinates[2])
             y0 = clamp((bbox[1] - crop_coordinates[1]) / crop_coordinates[3])
@@ -1169,7 +1263,6 @@ class LatentDiffusion(DDPM):
         return [rescale_bbox(b) for b in bboxes]
 
     def apply_model(self, x_noisy, t, cond, return_ids=False):
-
         if isinstance(cond, dict):
             # hybrid case, cond is exptected to be a dict
             pass
@@ -1177,7 +1270,9 @@ class LatentDiffusion(DDPM):
             if not isinstance(cond, list):
                 cond = [cond]
             key = (
-                "c_concat" if self.model.conditioning_key == "concat" else "c_crossattn"
+                "c_concat"
+                if self.model.conditioning_key == "concat"
+                else "c_crossattn"
             )
             cond = {key: cond}
 
@@ -1201,7 +1296,8 @@ class LatentDiffusion(DDPM):
             z_list = [z[:, :, :, :, i] for i in range(z.shape[-1])]
 
             if (
-                self.cond_stage_key in ["image", "LR_image", "segmentation", "bbox_img"]
+                self.cond_stage_key
+                in ["image", "LR_image", "segmentation", "bbox_img"]
                 and self.model.conditioning_key
             ):  # todo check for completeness
                 c_key = next(iter(cond.keys()))  # get key
@@ -1214,16 +1310,20 @@ class LatentDiffusion(DDPM):
                 # (bn, nc, ks[0], ks[1], L )
                 c = c.view((c.shape[0], -1, ks[0], ks[1], c.shape[-1]))
 
-                cond_list = [{c_key: [c[:, :, :, :, i]]} for i in range(c.shape[-1])]
+                cond_list = [
+                    {c_key: [c[:, :, :, :, i]]} for i in range(c.shape[-1])
+                ]
 
             elif self.cond_stage_key == "coordinates_bbox":
-                assert (
-                    "original_image_size" in self.split_input_params
-                ), "BoudingBoxRescaling is missing original_image_size"
+                assert "original_image_size" in self.split_input_params, (
+                    "BoudingBoxRescaling is missing original_image_size"
+                )
 
                 # assuming padding of unfold is always 0 and its dilation is always 1
                 n_patches_per_row = int((w - ks[0]) / stride[0] + 1)
-                full_img_h, full_img_w = self.split_input_params["original_image_size"]
+                full_img_h, full_img_w = self.split_input_params[
+                    "original_image_size"
+                ]
                 # as we are operating on latents, we need the factor from the original image size to the
                 # spatial latent size to properly rescale the crops for regenerating the bbox annotations
                 num_downs = self.first_stage_model.encoder.num_resolutions - 1
@@ -1259,19 +1359,24 @@ class LatentDiffusion(DDPM):
 
                 # tokenize crop coordinates for the bounding boxes of the respective patches
                 patch_limits_tknzd = [
-                    torch.LongTensor(self.bbox_tokenizer._crop_encoder(bbox))[None].to(
-                        self.device
-                    )
+                    torch.LongTensor(self.bbox_tokenizer._crop_encoder(bbox))[
+                        None
+                    ].to(self.device)
                     for bbox in patch_limits
                 ]  # list of length l with tensors of shape (1, 2)
                 print(patch_limits_tknzd[0].shape)
                 # cut tknzd crop position from conditioning
-                assert isinstance(cond, dict), "cond must be dict to be fed into model"
+                assert isinstance(cond, dict), (
+                    "cond must be dict to be fed into model"
+                )
                 cut_cond = cond["c_crossattn"][0][..., :-2].to(self.device)
                 print(cut_cond.shape)
 
                 adapted_cond = torch.stack(
-                    [torch.cat([cut_cond, p], dim=1) for p in patch_limits_tknzd]
+                    [
+                        torch.cat([cut_cond, p], dim=1)
+                        for p in patch_limits_tknzd
+                    ]
                 )
                 adapted_cond = rearrange(adapted_cond, "l b n -> (l b) n")
                 print(adapted_cond.shape)
@@ -1290,7 +1395,8 @@ class LatentDiffusion(DDPM):
 
             # apply model by loop over crops
             output_list = [
-                self.model(z_list[i], t, **cond_list[i]) for i in range(z.shape[-1])
+                self.model(z_list[i], t, **cond_list[i])
+                for i in range(z.shape[-1])
             ]
             assert not isinstance(
                 output_list[0], tuple
@@ -1314,7 +1420,8 @@ class LatentDiffusion(DDPM):
 
     def _predict_eps_from_xstart(self, x_t, t, pred_xstart):
         return (
-            extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
+            extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x_t.shape)
+            * x_t
             - pred_xstart
         ) / extract_into_tensor(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape)
 
@@ -1327,7 +1434,9 @@ class LatentDiffusion(DDPM):
         :return: a batch of [N] KL values (in bits), one per batch element.
         """
         batch_size = x_start.shape[0]
-        t = torch.tensor([self.num_timesteps - 1] * batch_size, device=x_start.device)
+        t = torch.tensor(
+            [self.num_timesteps - 1] * batch_size, device=x_start.device
+        )
         qt_mean, _, qt_log_variance = self.q_mean_variance(x_start, t)
         kl_prior = normal_kl(
             mean1=qt_mean, logvar1=qt_log_variance, mean2=0.0, logvar2=0.0
@@ -1349,7 +1458,9 @@ class LatentDiffusion(DDPM):
         else:
             raise NotImplementedError()
 
-        loss_simple = self.get_loss(model_output, target, mean=False).mean([1, 2, 3])
+        loss_simple = self.get_loss(model_output, target, mean=False).mean(
+            [1, 2, 3]
+        )
         loss_dict.update({f"{prefix}/loss_simple": loss_simple.mean()})
 
         logvar_t = self.logvar[t.cpu()].to(self.device)
@@ -1361,7 +1472,9 @@ class LatentDiffusion(DDPM):
 
         loss = self.l_simple_weight * loss.mean()
 
-        loss_vlb = self.get_loss(model_output, target, mean=False).mean(dim=(1, 2, 3))
+        loss_vlb = self.get_loss(model_output, target, mean=False).mean(
+            dim=(1, 2, 3)
+        )
         loss_vlb = (self.lvlb_weights[t] * loss_vlb).mean()
         loss_dict.update({f"{prefix}/loss_vlb": loss_vlb})
         loss += self.original_elbo_weight * loss_vlb
@@ -1382,7 +1495,9 @@ class LatentDiffusion(DDPM):
         corrector_kwargs=None,
     ):
         t_in = t
-        model_out = self.apply_model(x, t_in, c, return_ids=return_codebook_ids)
+        model_out = self.apply_model(
+            x, t_in, c, return_ids=return_codebook_ids
+        )
 
         if score_corrector is not None:
             assert self.parameterization == "eps"
@@ -1403,14 +1518,26 @@ class LatentDiffusion(DDPM):
         if clip_denoised:
             x_recon.clamp_(-1.0, 1.0)
         if quantize_denoised:
-            x_recon, _, [_, _, indices] = self.first_stage_model.quantize(x_recon)
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
-            x_start=x_recon, x_t=x, t=t
+            x_recon, _, [_, _, indices] = self.first_stage_model.quantize(
+                x_recon
+            )
+        model_mean, posterior_variance, posterior_log_variance = (
+            self.q_posterior(x_start=x_recon, x_t=x, t=t)
         )
         if return_codebook_ids:
-            return model_mean, posterior_variance, posterior_log_variance, logits
+            return (
+                model_mean,
+                posterior_variance,
+                posterior_log_variance,
+                logits,
+            )
         elif return_x0:
-            return model_mean, posterior_variance, posterior_log_variance, x_recon
+            return (
+                model_mean,
+                posterior_variance,
+                posterior_log_variance,
+                x_recon,
+            )
         else:
             return model_mean, posterior_variance, posterior_log_variance
 
@@ -1454,7 +1581,9 @@ class LatentDiffusion(DDPM):
         if noise_dropout > 0.0:
             noise = torch.nn.functional.dropout(noise, p=noise_dropout)
         # no noise when t == 0
-        nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
+        nonzero_mask = (1 - (t == 0).float()).reshape(
+            b, *((1,) * (len(x.shape) - 1))
+        )
 
         if return_codebook_ids:
             return model_mean + nonzero_mask * (
@@ -1462,11 +1591,15 @@ class LatentDiffusion(DDPM):
             ).exp() * noise, logits.argmax(dim=1)
         if return_x0:
             return (
-                model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise,
+                model_mean
+                + nonzero_mask * (0.5 * model_log_variance).exp() * noise,
                 x0,
             )
         else:
-            return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+            return (
+                model_mean
+                + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+            )
 
     @torch.no_grad()
     def progressive_denoising(
@@ -1537,7 +1670,9 @@ class LatentDiffusion(DDPM):
             if self.shorten_cond_schedule:
                 assert self.model.conditioning_key != "hybrid"
                 tc = self.cond_ids[ts].to(cond.device)
-                cond = self.q_sample(x_start=cond, t=tc, noise=torch.randn_like(cond))
+                cond = self.q_sample(
+                    x_start=cond, t=tc, noise=torch.randn_like(cond)
+                )
 
             img, x0_partial = self.p_sample(
                 img,
@@ -1581,7 +1716,6 @@ class LatentDiffusion(DDPM):
         start_T=None,
         log_every_t=None,
     ):
-
         if not log_every_t:
             log_every_t = self.log_every_t
         device = self.betas.device
@@ -1598,7 +1732,11 @@ class LatentDiffusion(DDPM):
         if start_T is not None:
             timesteps = min(timesteps, start_T)
         iterator = (
-            tqdm(reversed(range(0, timesteps)), desc="Sampling t", total=timesteps)
+            tqdm(
+                reversed(range(0, timesteps)),
+                desc="Sampling t",
+                total=timesteps,
+            )
             if verbose
             else reversed(range(0, timesteps))
         )
@@ -1613,7 +1751,9 @@ class LatentDiffusion(DDPM):
             if self.shorten_cond_schedule:
                 assert self.model.conditioning_key != "hybrid"
                 tc = self.cond_ids[ts].to(cond.device)
-                cond = self.q_sample(x_start=cond, t=tc, noise=torch.randn_like(cond))
+                cond = self.q_sample(
+                    x_start=cond, t=tc, noise=torch.randn_like(cond)
+                )
 
             img = self.p_sample(
                 img,
@@ -1653,7 +1793,12 @@ class LatentDiffusion(DDPM):
         **kwargs,
     ):
         if shape is None:
-            shape = (batch_size, self.channels, self.image_size, self.image_size)
+            shape = (
+                batch_size,
+                self.channels,
+                self.image_size,
+                self.image_size,
+            )
         if cond is not None:
             if isinstance(cond, dict):
                 cond = {
@@ -1683,7 +1828,9 @@ class LatentDiffusion(DDPM):
         )
 
     @torch.no_grad()
-    def sample_log(self, cond, batch_size, ddim, ddim_steps, image_size=None, **kwargs):
+    def sample_log(
+        self, cond, batch_size, ddim, ddim_steps, image_size=None, **kwargs
+    ):
         image_size = self.image_size if image_size is None else image_size
         if ddim:
             ddim_sampler = DDIMSampler(self)
@@ -1697,7 +1844,10 @@ class LatentDiffusion(DDPM):
 
         else:
             samples, intermediates = self.sample(
-                cond=cond, batch_size=batch_size, return_intermediates=True, **kwargs
+                cond=cond,
+                batch_size=batch_size,
+                return_intermediates=True,
+                **kwargs,
             )
 
         return samples, intermediates
@@ -1719,7 +1869,9 @@ class LatentDiffusion(DDPM):
             raise NotImplementedError()
         if isinstance(c, dict):
             c = {
-                key: repeat(c[key], "1 ... -> b ...", b=batch_size).to(self.device)
+                key: repeat(c[key], "1 ... -> b ...", b=batch_size).to(
+                    self.device
+                )
                 for key in c
             }
         else:
@@ -1797,7 +1949,10 @@ class LatentDiffusion(DDPM):
                 palettes = (xc["palette"] * 255).type(torch.uint8)
                 palettes = palettes.squeeze(1)
                 log["palette"] = torch.stack(
-                    [visualize_palette(palette.cpu().numpy()) for palette in palettes]
+                    [
+                        visualize_palette(palette.cpu().numpy())
+                        for palette in palettes
+                    ]
                 )
                 log["text"] = log_txt_as_img((256, 144), xc["text"])
 
@@ -1819,8 +1974,12 @@ class LatentDiffusion(DDPM):
             # n_log_step, n_row, C, H, W
             diffusion_row = torch.stack(diffusion_row)
             diffusion_grid = rearrange(diffusion_row, "n b c h w -> b n c h w")
-            diffusion_grid = rearrange(diffusion_grid, "b n c h w -> (b n) c h w")
-            diffusion_grid = make_grid(diffusion_grid, nrow=diffusion_row.shape[0])
+            diffusion_grid = rearrange(
+                diffusion_grid, "b n c h w -> (b n) c h w"
+            )
+            diffusion_grid = make_grid(
+                diffusion_grid, nrow=diffusion_row.shape[0]
+            )
             log["diffusion_row"] = diffusion_grid
 
         if sample:
@@ -1861,7 +2020,9 @@ class LatentDiffusion(DDPM):
                 log["samples_x0_quantized"] = x_samples
 
         if unconditional_guidance_scale > 1.0:
-            uc = self.get_unconditional_conditioning(N, unconditional_guidance_label)
+            uc = self.get_unconditional_conditioning(
+                N, unconditional_guidance_label
+            )
             with ema_scope("Sampling with classifier-free guidance"):
                 samples_cfg, _ = self.sample_log(
                     cond=c,
@@ -1873,9 +2034,9 @@ class LatentDiffusion(DDPM):
                     unconditional_conditioning=uc,
                 )
                 x_samples_cfg = self.decode_first_stage(samples_cfg)
-                log[f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"] = (
-                    x_samples_cfg
-                )
+                log[
+                    f"samples_cfg_scale_{unconditional_guidance_scale:.2f}"
+                ] = x_samples_cfg
 
         if inpaint:
             # make a simple center square
@@ -1938,7 +2099,9 @@ class LatentDiffusion(DDPM):
         lr = self.learning_rate
         params = list(self.model.parameters())
         if self.cond_stage_trainable:
-            print(f"{self.__class__.__name__}: Also optimizing conditioner params!")
+            print(
+                f"{self.__class__.__name__}: Also optimizing conditioner params!"
+            )
             params = params + list(self.cond_stage_model.parameters())
         if self.learn_logvar:
             print("Diffusion model optimizing logvar")

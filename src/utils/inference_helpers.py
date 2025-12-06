@@ -12,7 +12,13 @@ from PIL import Image
 from pytorch_lightning import seed_everything
 from torchvision.transforms.functional import center_crop, to_tensor
 
-from ldm.data.material_utils import *
+from ldm.data.material_utils import (
+    make_plot_maps,
+    map_transform_func,
+    pack_maps,
+    pylette_extract_colors_mod,
+    unpack_maps,
+)
 from ldm.util import load_model_from_config, visualize_palette
 
 parser = argparse.ArgumentParser(description="MatFuse")
@@ -27,7 +33,8 @@ model_ckpt = args.ckpt
 config = OmegaConf.load(model_config)
 
 model = load_model_from_config(config, model_ckpt)
-model = model.cuda()
+if torch.cuda.is_available():
+    model.cuda()
 model.eval()
 
 
@@ -68,12 +75,14 @@ def get_mask(mask, mask_all, latent_shape):
     # We invert zeros and ones for each mask if we use the mask from the sketch since gradio reads them inverted
     if mask_all or mask is None:
         return torch.zeros(latent_shape)
-    mask = mask[0].convert("L") # NOTE We take only the first layer of the gradio image editor
+    mask = mask[0].convert(
+        "L"
+    )  # NOTE We take only the first layer of the gradio image editor
     # mask = 1 - to_tensor(mask.resize(latent_shape[1:]))
     mask = np.array(mask.resize(latent_shape[1:]))
     mask[mask > 0] = 1
     mask = torch.tensor(mask)
-    mask = mask.repeat(3,1,1)
+    mask = mask.repeat(3, 1, 1)
     return 1 - mask
 
 
@@ -94,7 +103,7 @@ def generate(
     ema_scope = model.ema_scope if use_ema_scope else nullcontext
 
     if seed == -1:
-        seed = random.randint(0, 65535)
+        seed = random.randint(0, 2147483647)
     seed_everything(seed)
 
     latent_shape = (3, image_resolution // 8, image_resolution // 8)
@@ -137,7 +146,9 @@ def generate(
         )
     samples = F.pad(samples, (7, 7, 7, 7), mode="circular")
     x_samples_ema = model.decode_first_stage(samples)
-    x_samples_ema = center_crop(x_samples_ema, (image_resolution, image_resolution))
+    x_samples_ema = center_crop(
+        x_samples_ema, (image_resolution, image_resolution)
+    )
     map_samples = torch.cat([map_samples, x_samples_ema], dim=0)
 
     # Sampling with classifier-free guidance
@@ -199,7 +210,7 @@ def generate(
     maps = [m for m in maps]
     results = [sketch, palette, *maps]
     torch.cuda.empty_cache()
-    return results
+    return results, seed
 
 
 @torch.no_grad()
@@ -220,9 +231,13 @@ def run_generation(
     control = {}
 
     control["sketch"] = process_sketch(sketch, image_resolution, model.device)
-    control["image_embed"] = process_image(render_emb, image_resolution, model.device)
+    control["image_embed"] = process_image(
+        render_emb, image_resolution, model.device
+    )
     control["text"] = prompt
-    control["palette"] = process_palette(palette_source, image_resolution, model.device)
+    control["palette"] = process_palette(
+        palette_source, image_resolution, model.device
+    )
     control["image_embed"] = torch.stack(
         [control["image_embed"] for _ in range(num_samples)], dim=0
     )
@@ -268,18 +283,25 @@ def run_editing(
     use_ema_scope=True,
     use_ddim=True,
 ):
-
     diff_map = process_image(
-        diff["background"] if diff is not None else None, image_resolution, model.device
+        diff["background"] if diff is not None else None,
+        image_resolution,
+        model.device,
     )
     norm_map = process_image(
-        norm["background"] if norm is not None else None, image_resolution, model.device
+        norm["background"] if norm is not None else None,
+        image_resolution,
+        model.device,
     )
     rough_map = process_image(
-        rough["background"] if rough is not None else None, image_resolution, model.device
+        rough["background"] if rough is not None else None,
+        image_resolution,
+        model.device,
     )
     spec_map = process_image(
-        spec["background"] if spec is not None else None, image_resolution, model.device
+        spec["background"] if spec is not None else None,
+        image_resolution,
+        model.device,
     )
 
     packed_maps = pack_maps(
@@ -299,9 +321,13 @@ def run_editing(
     control["sketch"] = torch.zeros(
         num_samples, 1, image_resolution, image_resolution, device=model.device
     )
-    control["image_embed"] = process_image(render_emb, image_resolution, model.device)
+    control["image_embed"] = process_image(
+        render_emb, image_resolution, model.device
+    )
     control["text"] = [prompt]
-    control["palette"] = process_palette(palette_source, image_resolution, model.device)
+    control["palette"] = process_palette(
+        palette_source, image_resolution, model.device
+    )
 
     control["image_embed"] = torch.stack(
         [control["image_embed"] for _ in range(num_samples)], dim=0
@@ -314,16 +340,24 @@ def run_editing(
     mask = pack_maps(
         {
             "Diffuse": get_mask(
-                diff["layers"] if diff is not None else None, mask_diff, latent_shape
+                diff["layers"] if diff is not None else None,
+                mask_diff,
+                latent_shape,
             ),
             "Normal": get_mask(
-                norm["layers"] if norm is not None else None, mask_norm, latent_shape
+                norm["layers"] if norm is not None else None,
+                mask_norm,
+                latent_shape,
             ),
             "Roughness": get_mask(
-                rough["layers"] if rough is not None else None, mask_rough, latent_shape
+                rough["layers"] if rough is not None else None,
+                mask_rough,
+                latent_shape,
             ),
             "Specular": get_mask(
-                spec["layers"] if spec is not None else None, mask_spec, latent_shape
+                spec["layers"] if spec is not None else None,
+                mask_spec,
+                latent_shape,
             ),
         }
     )

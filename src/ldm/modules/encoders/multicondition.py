@@ -83,7 +83,9 @@ class MultiConditionEncoder(nn.Module):
     def forward(self, x):
         with torch.no_grad():
             image_embed = self.image_embed(x["image_embed"])
-            text_embed = self.text_embed(x["text"]).unsqueeze(1)
+            text_embed = (
+                self.text_embed(x["text"]).unsqueeze(1).to(image_embed.device)
+            )
         sketch = self.sketch_encoder(x["sketch"])
         palette = self.palette_encoder(x["palette"]).unsqueeze(1)
 

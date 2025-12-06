@@ -64,8 +64,10 @@ def visualize_palette(palette):
 
     # Convert the figure to a NumPy array
     fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    # ARGB to RGB
+    data = data[:, :, 1:4]
     # Convert the plot into tensor and return it
     data = torch.tensor(data)
     data = rearrange(data, "h w c -> c h w")
@@ -105,7 +107,9 @@ def mean_flat(tensor):
 def count_params(model, verbose=False):
     total_params = sum(p.numel() for p in model.parameters())
     if verbose:
-        print(f"{model.__class__.__name__} has {total_params*1.e-6:.2f} M params.")
+        print(
+            f"{model.__class__.__name__} has {total_params * 1.0e-6:.2f} M params."
+        )
     return total_params
 
 
@@ -127,7 +131,8 @@ def load_model_from_config(config, ckpt):
     m, u = model.load_state_dict(sd, strict=False)
     print(f"Missing keys: {m}")
     print(f"Unexpected keys: {u}")
-    model.cuda()
+    if torch.cuda.is_available():
+        model.cuda()
     model.eval()
     return model
 
@@ -161,11 +166,17 @@ class AdamWwithEMAandWings(optim.Optimizer):
         if not 0.0 <= eps:
             raise ValueError("Invalid epsilon value: {}".format(eps))
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+            raise ValueError(
+                "Invalid beta parameter at index 0: {}".format(betas[0])
+            )
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
+            raise ValueError(
+                "Invalid beta parameter at index 1: {}".format(betas[1])
+            )
         if not 0.0 <= weight_decay:
-            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+            raise ValueError(
+                "Invalid weight_decay value: {}".format(weight_decay)
+            )
         if not 0.0 <= ema_decay <= 1.0:
             raise ValueError("Invalid ema_decay value: {}".format(ema_decay))
         defaults = dict(
@@ -216,7 +227,9 @@ class AdamWwithEMAandWings(optim.Optimizer):
                     continue
                 params_with_grad.append(p)
                 if p.grad.is_sparse:
-                    raise RuntimeError("AdamW does not support sparse gradients")
+                    raise RuntimeError(
+                        "AdamW does not support sparse gradients"
+                    )
                 grads.append(p.grad)
 
                 state = self.state[p]
@@ -269,7 +282,9 @@ class AdamWwithEMAandWings(optim.Optimizer):
             )
 
             cur_ema_decay = min(ema_decay, 1 - state["step"] ** -ema_power)
-            for param, ema_param in zip(params_with_grad, ema_params_with_grad):
+            for param, ema_param in zip(
+                params_with_grad, ema_params_with_grad
+            ):
                 ema_param.mul_(cur_ema_decay).add_(
                     param.float(), alpha=1 - cur_ema_decay
                 )

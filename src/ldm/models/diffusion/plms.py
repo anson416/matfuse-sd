@@ -20,13 +20,17 @@ class PLMSSampler(object):
         self.schedule = schedule
 
     def register_buffer(self, name, attr):
-        if type(attr) == torch.Tensor:
-            if attr.device != torch.device("cuda"):
-                attr = attr.to(torch.device("cuda"))
+        # if type(attr) == torch.Tensor:
+        #     if attr.device != torch.device("cuda"):
+        #         attr = attr.to(torch.device("cuda"))
         setattr(self, name, attr)
 
     def make_schedule(
-        self, ddim_num_steps, ddim_discretize="uniform", ddim_eta=0.0, verbose=True
+        self,
+        ddim_num_steps,
+        ddim_discretize="uniform",
+        ddim_eta=0.0,
+        verbose=True,
     ):
         if ddim_eta != 0:
             raise ValueError("ddim_eta must be 0 for PLMS")
@@ -37,10 +41,15 @@ class PLMSSampler(object):
             verbose=verbose,
         )
         alphas_cumprod = self.model.alphas_cumprod
-        assert (
-            alphas_cumprod.shape[0] == self.ddpm_num_timesteps
-        ), "alphas have to be defined for each timestep"
-        to_torch = lambda x: x.clone().detach().to(torch.float32).to(self.model.device)
+        assert alphas_cumprod.shape[0] == self.ddpm_num_timesteps, (
+            "alphas have to be defined for each timestep"
+        )
+        to_torch = (
+            lambda x: x.clone()
+            .detach()
+            .to(torch.float32)
+            .to(self.model.device)
+        )
 
         self.register_buffer("betas", to_torch(self.model.betas))
         self.register_buffer("alphas_cumprod", to_torch(alphas_cumprod))
@@ -57,10 +66,12 @@ class PLMSSampler(object):
             to_torch(np.sqrt(1.0 - alphas_cumprod.cpu())),
         )
         self.register_buffer(
-            "log_one_minus_alphas_cumprod", to_torch(np.log(1.0 - alphas_cumprod.cpu()))
+            "log_one_minus_alphas_cumprod",
+            to_torch(np.log(1.0 - alphas_cumprod.cpu())),
         )
         self.register_buffer(
-            "sqrt_recip_alphas_cumprod", to_torch(np.sqrt(1.0 / alphas_cumprod.cpu()))
+            "sqrt_recip_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / alphas_cumprod.cpu())),
         )
         self.register_buffer(
             "sqrt_recipm1_alphas_cumprod",
@@ -68,23 +79,28 @@ class PLMSSampler(object):
         )
 
         # ddim sampling parameters
-        ddim_sigmas, ddim_alphas, ddim_alphas_prev = make_ddim_sampling_parameters(
-            alphacums=alphas_cumprod.cpu(),
-            ddim_timesteps=self.ddim_timesteps,
-            eta=ddim_eta,
-            verbose=verbose,
+        ddim_sigmas, ddim_alphas, ddim_alphas_prev = (
+            make_ddim_sampling_parameters(
+                alphacums=alphas_cumprod.cpu(),
+                ddim_timesteps=self.ddim_timesteps,
+                eta=ddim_eta,
+                verbose=verbose,
+            )
         )
         self.register_buffer("ddim_sigmas", ddim_sigmas)
         self.register_buffer("ddim_alphas", ddim_alphas)
         self.register_buffer("ddim_alphas_prev", ddim_alphas_prev)
-        self.register_buffer("ddim_sqrt_one_minus_alphas", np.sqrt(1.0 - ddim_alphas))
+        self.register_buffer(
+            "ddim_sqrt_one_minus_alphas", np.sqrt(1.0 - ddim_alphas)
+        )
         sigmas_for_original_sampling_steps = ddim_eta * torch.sqrt(
             (1 - self.alphas_cumprod_prev)
             / (1 - self.alphas_cumprod)
             * (1 - self.alphas_cumprod / self.alphas_cumprod_prev)
         )
         self.register_buffer(
-            "ddim_sigmas_for_original_num_steps", sigmas_for_original_sampling_steps
+            "ddim_sigmas_for_original_num_steps",
+            sigmas_for_original_sampling_steps,
         )
 
     @torch.no_grad()
@@ -205,7 +221,9 @@ class PLMSSampler(object):
             if ddim_use_original_steps
             else np.flip(timesteps)
         )
-        total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
+        total_steps = (
+            timesteps if ddim_use_original_steps else timesteps.shape[0]
+        )
         print(f"Running PLMS Sampling with {total_steps} timesteps")
 
         iterator = tqdm(time_range, desc="PLMS Sampler", total=total_steps)
@@ -290,8 +308,12 @@ class PLMSSampler(object):
                 x_in = torch.cat([x] * 2)
                 t_in = torch.cat([t] * 2)
                 c_in = torch.cat([unconditional_conditioning, c])
-                e_t_uncond, e_t = self.model.apply_model(x_in, t_in, c_in).chunk(2)
-                e_t = e_t_uncond + unconditional_guidance_scale * (e_t - e_t_uncond)
+                e_t_uncond, e_t = self.model.apply_model(
+                    x_in, t_in, c_in
+                ).chunk(2)
+                e_t = e_t_uncond + unconditional_guidance_scale * (
+                    e_t - e_t_uncond
+                )
 
             if score_corrector is not None:
                 assert self.model.parameterization == "eps"
@@ -301,7 +323,11 @@ class PLMSSampler(object):
 
             return e_t
 
-        alphas = self.model.alphas_cumprod if use_original_steps else self.ddim_alphas
+        alphas = (
+            self.model.alphas_cumprod
+            if use_original_steps
+            else self.ddim_alphas
+        )
         alphas_prev = (
             self.model.alphas_cumprod_prev
             if use_original_steps
@@ -321,7 +347,9 @@ class PLMSSampler(object):
         def get_x_prev_and_pred_x0(e_t, index):
             # select parameters corresponding to the currently considered timestep
             a_t = torch.full((b, 1, 1, 1), alphas[index], device=device)
-            a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
+            a_prev = torch.full(
+                (b, 1, 1, 1), alphas_prev[index], device=device
+            )
             sigma_t = torch.full((b, 1, 1, 1), sigmas[index], device=device)
             sqrt_one_minus_at = torch.full(
                 (b, 1, 1, 1), sqrt_one_minus_alphas[index], device=device
@@ -335,7 +363,11 @@ class PLMSSampler(object):
                 pred_x0 = norm_thresholding(pred_x0, dynamic_threshold)
             # direction pointing to x_t
             dir_xt = (1.0 - a_prev - sigma_t**2).sqrt() * e_t
-            noise = sigma_t * noise_like(x.shape, device, repeat_noise) * temperature
+            noise = (
+                sigma_t
+                * noise_like(x.shape, device, repeat_noise)
+                * temperature
+            )
             if noise_dropout > 0.0:
                 noise = torch.nn.functional.dropout(noise, p=noise_dropout)
             x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
@@ -356,7 +388,10 @@ class PLMSSampler(object):
         elif len(old_eps) >= 3:
             # 4nd order Pseudo Linear Multistep (Adams-Bashforth)
             e_t_prime = (
-                55 * e_t - 59 * old_eps[-1] + 37 * old_eps[-2] - 9 * old_eps[-3]
+                55 * e_t
+                - 59 * old_eps[-1]
+                + 37 * old_eps[-2]
+                - 9 * old_eps[-3]
             ) / 24
 
         x_prev, pred_x0 = get_x_prev_and_pred_x0(e_t_prime, index)
